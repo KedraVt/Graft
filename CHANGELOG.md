@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **`pi` host for the [pi coding agent](https://pi.dev)**: `graft init --agents pi`
+  writes a graft-owned skill to `.agents/skills/graft/SKILL.md` (pi reads the
+  Agent Skills standard from there) and detects pi via `~/.pi` or a repo-local
+  `.pi`. No MCP target in this phase — pi routes graft through the skill and the
+  graft CLI. Retraction and the init plan pick it up automatically from the
+  registry.
+
 ## 0.17.0
 
 ### Added

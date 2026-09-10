@@ -84,6 +84,18 @@ export const HOSTS: HostTarget[] = [
       p.dirExists(join(p.repo, '.hermes')),
   },
   {
+    id: 'pi',
+    name: 'pi coding agent',
+    kind: 'owned',
+    relPath: join('.agents', 'skills', 'graft', 'SKILL.md'),
+    content: skillTemplate,
+    // pi loads project skills from `.agents/skills/` (Agent Skills standard) and
+    // keeps global state in `~/.pi`. Detection uses pi-specific markers only —
+    // `.agents/` stays Antigravity's (it reads a workspace `.agents` dir), so
+    // auto-detect never lights up both hosts at once.
+    detect: (p) => p.dirExists(join(p.home, '.pi')) || p.dirExists(join(p.repo, '.pi')),
+  },
+  {
     id: 'antigravity',
     name: 'Google Antigravity',
     kind: 'section',

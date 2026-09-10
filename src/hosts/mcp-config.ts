@@ -213,7 +213,7 @@ export function mcpTargets(
         }
         break;
       default:
-        break; // copilot / windsurf / adal: no MCP target in this phase
+        break; // copilot / windsurf / adal / pi: no MCP target in this phase
     }
   }
   return out;
