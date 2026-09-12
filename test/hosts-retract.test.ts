@@ -207,7 +207,7 @@ test('planRetract is pure — it reports without touching anything', () => {
 test('a full init is fully retractable, and retraction is idempotent', () => {
   const d = fresh();
   runInit(d, { build: false, home: fresh() });
-  runHostsInit(d, { agents: ['cursor', 'agents'], home: d, global: false });
+  runHostsInit(d, { agents: ['cursor', 'pi', 'agents'], home: d, global: false });
 
   const first = changed(runRetract(d, { apply: true, global: false }));
   assert.ok(first.length > 0, 'init left something to retract');
@@ -219,6 +219,10 @@ test('a full init is fully retractable, and retraction is idempotent', () => {
     join('.claude', 'helpers', 'graft-hooks.cjs'),
     join('.claude', 'skills', 'graft', 'SKILL.md'),
     join('.cursor', 'rules', 'graft.mdc'),
+    join('.pi', 'skills', 'graft', 'SKILL.md'),
+    join('.pi', 'extensions', 'graft.ts'),
+    join('.pi', 'hooks', 'graft-hooks.cjs'),
+    join('.pi', 'mcp.json'),
     '.mcp.json',
   ]) {
     assert.ok(!existsSync(join(d, rel)), `${rel} should be gone`);
@@ -227,6 +231,21 @@ test('a full init is fully retractable, and retraction is idempotent', () => {
   // A second sweep finds nothing — no residue, no double-removal.
   const second = changed(runRetract(d, { apply: true, global: false }));
   assert.deepEqual(second, [], `second sweep should be a no-op, got ${JSON.stringify(second)}`);
+});
+
+test('pi hook files are retracted, and exclude spares them', () => {
+  const d = fresh();
+  runHostsInit(d, { agents: ['pi'], home: fresh(), global: false });
+  const ext = join(d, '.pi', 'extensions', 'graft.ts');
+  const shim = join(d, '.pi', 'hooks', 'graft-hooks.cjs');
+
+  runRetract(d, { apply: true, global: false, exclude: ['pi'] });
+  assert.ok(existsSync(ext) && existsSync(shim), 'excluded host keeps its hook files');
+
+  const r = byPath(runRetract(d, { apply: true, global: false }));
+  assert.equal(r.get(ext), 'deleted');
+  assert.equal(r.get(shim), 'deleted');
+  assert.ok(!existsSync(join(d, '.pi')), 'the emptied .pi/ tree is pruned too');
 });
 
 test('exclude spares the hosts init is about to rewrite', () => {

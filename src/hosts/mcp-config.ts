@@ -188,6 +188,18 @@ export function mcpTargets(
           jsonTarget(id, 'antigravity', join(home, '.gemini', 'config', 'mcp_config.json'), 'mcpServers', entry, 'global'),
         );
         break;
+      case 'pi':
+        // Pi's MCP client is an extension (`pi install npm:pi-mcp-extension`), and
+        // it reads a plain `{ mcpServers: { … } }` file: global
+        // `~/.pi/agent/mcp.json` or project `.pi/mcp.json`, the project one
+        // overriding per server (https://pi.dev/packages/pi-mcp-extension).
+        // Repo-local, where Pi's skill and extension already go. `lifecycle` is
+        // the one non-standard field: it defaults to 'lazy', which would leave the
+        // graft tools behind a manual `/mcp:start` in every session.
+        out.push(
+          jsonTarget(id, id, join(repo, '.pi', 'mcp.json'), 'mcpServers', { ...entry, lifecycle: 'eager' }),
+        );
+        break;
       case 'kiro':
         out.push(jsonTarget(id, id, join(repo, '.kiro', 'settings', 'mcp.json'), 'mcpServers', entry));
         break;
@@ -213,7 +225,7 @@ export function mcpTargets(
         }
         break;
       default:
-        break; // copilot / windsurf / adal / pi: no MCP target in this phase
+        break; // copilot / windsurf / adal: no MCP target in this phase
     }
   }
   return out;

@@ -85,6 +85,16 @@ test('detected mirrors detectHosts; claude is always available', () => {
   assert.deepEqual(detected, ['adal', 'claude']);
 });
 
+test('pi plans a skill, a repo-local MCP file and the two hook files — nothing global', () => {
+  const repo = fresh();
+  const pi = planInit(repo, { home: fullHome(), ids: ['pi'] })[0];
+  assert.deepEqual(pi.writes.filter((w) => w.scope === 'global'), [], 'Pi is wired repo-locally');
+  assert.deepEqual(
+    pi.writes.map((w) => toPosixPath(w.path.slice(repo.length))).sort(),
+    ['/.pi/extensions/graft.ts', '/.pi/hooks/graft-hooks.cjs', '/.pi/mcp.json', '/.pi/skills/graft/SKILL.md'],
+  );
+});
+
 test('adal is an instruction-only host — no MCP target', () => {
   const adal = planInit(fresh(), { home: fullHome(), ids: ['adal'] })[0];
   assert.equal(adal.writes.length, 1);

@@ -4,12 +4,14 @@
 
 ### Added
 
-- **`pi` host for the [pi coding agent](https://pi.dev)**: `graft init --agents pi`
-  writes a graft-owned skill to `.agents/skills/graft/SKILL.md` (pi reads the
-  Agent Skills standard from there) and detects pi via `~/.pi` or a repo-local
-  `.pi`. No MCP target in this phase — pi routes graft through the skill and the
-  graft CLI. Retraction and the init plan pick it up automatically from the
-  registry.
+- **[Pi](https://pi.dev) is a deeply-wired host**, not just an instruction file:
+  `graft init --agents pi` writes the skill card, registers the MCP server in
+  `.pi/mcp.json`, and installs a Pi extension that runs graft's four hooks —
+  repo map at session start, retrieval on each prompt, blast radius on an edit,
+  background re-sync when the agent settles. Pi has no hook config file (its
+  extension API is the hook system), so the extension maps Pi's lifecycle events
+  onto the same hook shim every other host runs. Everything lands inside the
+  repo, and `graft retract` removes all of it.
 
 ## 0.17.0
 

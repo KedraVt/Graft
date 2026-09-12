@@ -57,7 +57,7 @@
 - [Supported languages](#supported-languages)
 - [What's in a node](#whats-in-a-node)
 - [What runs where](#what-runs-where)
-- [Agent integration](#agent-integration) — [MCP server](#mcp-server) · [Claude Code (deep integration)](#claude-code-deep-integration)
+- [Agent integration](#agent-integration) — [MCP server](#mcp-server) · [Claude Code (deep integration)](#claude-code-deep-integration) · [Pi (deep integration)](#pi-deep-integration)
 - [CLI](#cli)
 - [Search & orient](#search--orient-graft-grep--graft-map) (`graft grep` / `graft map`)
 - [Monorepos & multi-repo folders](#monorepos--multi-repo-folders)
@@ -267,13 +267,13 @@ npx @nanonets/graft init
 # Claude Code additionally gets the live statusline + hooks below
 ```
 
-On a terminal, `init` shows you every agent it knows about — flagging the ones it detected (via their config directories) and listing the exact files each would write — and wires only the ones you select. Claude Code is pre-selected; nothing else is. Selected agents get a marker-fenced Graft section in their shared instruction file — `AGENTS.md` (Codex, OpenCode and other CLIs that read it), `GEMINI.md`, `.github/copilot-instructions.md` — or a wholly-owned rule/skill file for the agents that use one: `.claude/skills/graft/SKILL.md`, `.cursor/rules/graft.mdc`, `.kiro/steering/graft.md`, `.windsurf/rules/graft.md`, `.grok/skills/graft/SKILL.md` for Grok (xAI), `.adal/skills/graft/SKILL.md` for [AdaL](https://adal.sylph.ai), `.agents/skills/graft/SKILL.md` for the [pi coding agent](https://pi.dev). Claude Code is in the second group: `init` writes its own skill file and never touches your `CLAUDE.md`. Re-running only updates Graft's own section (or replaces the owned file) and never touches the rest of your content.
+On a terminal, `init` shows you every agent it knows about — flagging the ones it detected (via their config directories) and listing the exact files each would write — and wires only the ones you select. Claude Code is pre-selected; nothing else is. Selected agents get a marker-fenced Graft section in their shared instruction file — `AGENTS.md` (Codex, OpenCode and other CLIs that read it), `GEMINI.md`, `.github/copilot-instructions.md` — or a wholly-owned rule/skill file for the agents that use one: `.claude/skills/graft/SKILL.md`, `.cursor/rules/graft.mdc`, `.kiro/steering/graft.md`, `.windsurf/rules/graft.md`, `.grok/skills/graft/SKILL.md` for Grok (xAI), `.adal/skills/graft/SKILL.md` for [AdaL](https://adal.sylph.ai), `.pi/skills/graft/SKILL.md` for [Pi](https://pi.dev). Claude Code is in the second group: `init` writes its own skill file and never touches your `CLAUDE.md`. Re-running only updates Graft's own section (or replaces the owned file) and never touches the rest of your content.
 
 With no TTY to prompt on — CI, a Dockerfile, a piped shell — `init` writes **nothing** and prints the command to run instead. Pass `--agents <ids>` or `--yes` to make a scripted run explicit.
 
 | Flag | Effect |
 |---|---|
-| `--agents <ids...>` | wire only these, no prompt — ids: `agents`, `cursor`, `gemini`, `grok`, `copilot`, `kiro`, `windsurf`, `adal`, `pi`, `claude` |
+| `--agents <ids...>` | wire only these, no prompt — ids: `agents`, `cursor`, `gemini`, `grok`, `pi`, `copilot`, `kiro`, `windsurf`, `adal`, `claude` |
 | `--yes`, `-y` | skip the prompt and wire every **detected** agent |
 | `--dry-run` | print every file `init` would touch, then exit without writing |
 | `--all-agents` | write instruction files for every known agent, detected or not |
@@ -337,6 +337,19 @@ Where a CLI agent supports user-level `hooks.json`, `init` also installs Graft's
 
 `graft init` is idempotent and never clobbers your existing `.claude/settings.json` — it merges its blocks and leaves the rest alone. A `statusLine` that is not Graft's (anything whose command does not name `graft-statusline.cjs`) is left untouched; re-running `init` will refresh Graft's own helper command if it is already installed. Pass `--no-statusline` (or `GRAFT_NO_STATUSLINE=1`) to skip installing one at all — a project-level `statusLine` would otherwise hide a custom one in `~/.claude/settings.json`. Want the LLM summaries too? Run `graft build --deep` (with a key) whenever you like; auto-sync will never do it for you.
 
+### Pi (deep integration)
+
+[Pi](https://pi.dev) gets the same four-hook loop as Claude Code, wired entirely inside the repo. Selecting `pi` writes:
+
+| Path | What it does |
+|---|---|
+| `.pi/skills/graft/SKILL.md` | the skill card — Pi reads project skills from `.pi/skills/` |
+| `.pi/mcp.json` | registers the Graft MCP server under `mcpServers` |
+| `.pi/extensions/graft.ts` | the hook loop, as a Pi extension |
+| `.pi/hooks/graft-hooks.cjs` | the hook shim the extension calls |
+
+Pi has no hook config file: [its extension API *is* the hook system](https://pi.dev/docs/latest/extensions), so Graft ships a small extension that maps Pi's lifecycle events onto the same hooks every other agent runs — `session_start` → repo map, `before_agent_start` → context for the prompt, `tool_result` on an edit → blast radius appended to the edit's result, `agent_settled` → background re-sync. Nothing is written outside the repo, so `--no-global` keeps it all; `--no-hooks` skips the last two rows. The MCP server becomes visible once Pi's MCP client extension is installed (`pi install npm:pi-mcp-extension`) — the config is written either way.
+
 ---
 
 ## CLI
@@ -390,7 +403,7 @@ graft viz --export site/ --title "PR #12"  # one self-contained index.html — f
 
 graft init [dir]                     # pick which agents to wire (prompts on a terminal; writes nothing until you choose)
 graft init --dry-run                 # list every file it would touch, then exit
-graft init --agents cursor kiro      # wire only these agents, no prompt (ids: agents, cursor, gemini, grok, copilot, kiro, windsurf, adal, pi, claude)
+graft init --agents cursor kiro      # wire only these agents, no prompt (ids: agents, cursor, gemini, grok, pi, copilot, kiro, windsurf, adal, claude)
 graft init --yes                     # no prompt; wire every detected agent
 graft init --no-global               # skip writes outside this repo (~/.codex/ config + hooks)
 graft init --no-statusline           # skip Claude Code statusLine (same as GRAFT_NO_STATUSLINE=1)

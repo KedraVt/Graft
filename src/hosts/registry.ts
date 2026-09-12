@@ -84,18 +84,6 @@ export const HOSTS: HostTarget[] = [
       p.dirExists(join(p.repo, '.hermes')),
   },
   {
-    id: 'pi',
-    name: 'pi coding agent',
-    kind: 'owned',
-    relPath: join('.agents', 'skills', 'graft', 'SKILL.md'),
-    content: skillTemplate,
-    // pi loads project skills from `.agents/skills/` (Agent Skills standard) and
-    // keeps global state in `~/.pi`. Detection uses pi-specific markers only —
-    // `.agents/` stays Antigravity's (it reads a workspace `.agents` dir), so
-    // auto-detect never lights up both hosts at once.
-    detect: (p) => p.dirExists(join(p.home, '.pi')) || p.dirExists(join(p.repo, '.pi')),
-  },
-  {
     id: 'antigravity',
     name: 'Google Antigravity',
     kind: 'section',
@@ -108,6 +96,20 @@ export const HOSTS: HostTarget[] = [
       p.dirExists(join(p.home, '.gemini', 'config')) ||
       p.dirExists(join(p.home, '.gemini', 'antigravity-cli')) ||
       p.dirExists(join(p.repo, '.agents')),
+  },
+  {
+    id: 'pi',
+    name: 'Pi (earendil-works)',
+    kind: 'owned',
+    // Pi implements the Agent Skills standard and discovers `.pi/skills/*/SKILL.md`
+    // in a trusted project (https://pi.dev/docs/latest/skills). `.pi/` over the
+    // `.agents/skills/` it also reads: that directory is Antigravity's marker, and
+    // everything else graft writes for Pi (MCP config, hook extension) is under
+    // `.pi/` anyway. Its AGENTS.md reading is covered by the `agents` host.
+    // Detection stays on Pi-only markers so it never lights up both hosts.
+    relPath: join('.pi', 'skills', 'graft', 'SKILL.md'),
+    content: skillTemplate,
+    detect: (p) => p.dirExists(join(p.home, '.pi')) || p.dirExists(join(p.repo, '.pi')),
   },
   {
     id: 'copilot',

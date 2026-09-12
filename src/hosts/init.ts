@@ -11,6 +11,7 @@ import { upsertSection } from './sections.js';
 import { registerMcpConfigs, type McpWrite } from './mcp-config.js';
 import { installCodexHooks } from './codex-hooks.js';
 import { installCursorHooks } from './cursor-hooks.js';
+import { installPiHooks } from './pi-hooks.js';
 import type { ConfigWrite } from './config-write.js';
 import { installAntigravitySkill } from './antigravity.js';
 
@@ -89,10 +90,16 @@ export function runHostsInit(
     opts.hooks === false || !selected.some((h) => h.id === 'cursor')
       ? []
       : installCursorHooks(repo);
+  // Pi's extension + shim are repo-local (.pi/), same posture as Cursor's hooks:
+  // --no-global leaves them in place, only --no-hooks skips them.
+  const piHooks =
+    opts.hooks === false || !selected.some((h) => h.id === 'pi')
+      ? []
+      : installPiHooks(repo);
   // Antigravity's skill is a global write too, so --no-global suppresses it as well.
   const antigravitySkill =
     opts.global === false || !selected.some((h) => h.id === 'antigravity')
       ? []
       : installAntigravitySkill(home);
-  return { written, skipped, unknown, mcp, hooks: [...hooks, ...cursorHooks, ...antigravitySkill] };
+  return { written, skipped, unknown, mcp, hooks: [...hooks, ...cursorHooks, ...piHooks, ...antigravitySkill] };
 }

@@ -30,6 +30,7 @@ import { HOSTS } from './registry.js';
 import { START, END } from './sections.js';
 import { mcpTargets, stripTomlSection } from './mcp-config.js';
 import { hookTargets } from './codex-hooks.js';
+import { piHookTargets } from './pi-hooks.js';
 import { antigravitySkillTargets } from './antigravity.js';
 import { claudeGlobalTargets } from './claude-global.js';
 import { claudeTargets } from '../claude/init.js';
@@ -370,6 +371,7 @@ function targets(repo: string, opts: RetractOpts): Target[] {
     for (const t of claudeGlobalTargets(home)) keptPaths.add(t.path);
   }
   if (exclude.has('agents')) for (const t of hookTargets(home)) keptPaths.add(t.path);
+  if (exclude.has('pi')) for (const t of piHookTargets(repo)) keptPaths.add(t.path);
   if (exclude.has('antigravity')) for (const t of antigravitySkillTargets(home)) keptPaths.add(t.path);
 
   /** Queue a target unless a kept host owns that path, or it's already queued. */
@@ -410,6 +412,15 @@ function targets(repo: string, opts: RetractOpts): Target[] {
       hostId: t.hostId, path: t.path, what: t.what, scope: t.scope,
       run: (a) => (t.format === 'toml' ? removeTomlSection(t.path, a) : removeJsonKey(t.path, t.topKey!, a)),
     });
+  }
+
+  // 2b. Pi's hook layer. Repo-local and wholly graft's (an extension module plus
+  //     the shim it calls), so both come off as whole files. Listed explicitly:
+  //     unlike the MCP configs there is no registry to derive them from.
+  if (!exclude.has('pi')) {
+    for (const t of piHookTargets(repo)) {
+      add({ hostId: t.hostId, path: t.path, what: t.what, scope: 'repo', run: (a) => removeFile(t.path, a) });
+    }
   }
 
   // 3. Claude Code: settings fragments, both shims, the skill, and the .mcp.json key.

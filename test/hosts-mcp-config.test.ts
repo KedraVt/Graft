@@ -21,6 +21,24 @@ test('cursor/gemini/kiro get repo-local JSON entries', () => {
   assert.ok(existsSync(join(repo, '.kiro', 'settings', 'mcp.json')));
 });
 
+test('pi gets a repo-local .pi/mcp.json entry, preserving foreign servers', () => {
+  const repo = fresh(); const home = fresh();
+  mkdirSync(join(repo, '.pi'), { recursive: true });
+  writeFileSync(join(repo, '.pi', 'mcp.json'), JSON.stringify({ mcpServers: { other: { command: 'x' } } }));
+  const w = registerMcpConfigs(repo, ['pi'], { home });
+  assert.deepEqual(w.map((x) => x.action), ['updated']);
+  const cfg = JSON.parse(readFileSync(join(repo, '.pi', 'mcp.json'), 'utf8'));
+  // eager: Pi's MCP extension defaults to lazy, which would park the tools
+  // behind a manual /mcp:start in every session.
+  assert.deepEqual(cfg.mcpServers.graft, {
+    command: 'npx', args: ['-y', '@nanonets/graft', 'mcp'], lifecycle: 'eager',
+  });
+  assert.ok(cfg.mcpServers.other, 'foreign server preserved');
+  // Repo-scoped, like Pi's skill and extension: nothing lands in ~/.pi.
+  assert.ok(!existsSync(join(home, '.pi')), 'no global Pi write');
+  assert.deepEqual(registerMcpConfigs(repo, ['pi'], { home }).map((x) => x.action), ['unchanged']);
+});
+
 test('existing config keys are preserved; re-run is unchanged', () => {
   const repo = fresh(); const home = fresh();
   mkdirSync(join(repo, '.cursor'), { recursive: true });

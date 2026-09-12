@@ -115,6 +115,38 @@ test('runHostsInit registers MCP configs for selected hosts', () => {
   assert.equal(cfg.mcpServers.graft.command, 'npx');
 });
 
+test('--agents pi wires the whole Pi layer, and a re-run is unchanged', () => {
+  const home = fresh(); const repo = fresh();
+  const r = runHostsInit(repo, { home, agents: ['pi'] });
+  assert.deepEqual(r.written.map((w) => w.id), ['pi']);
+  const skill = readFileSync(join(repo, '.pi', 'skills', 'graft', 'SKILL.md'), 'utf8');
+  assert.match(skill, /^---\nname: graft\n/, 'Agent Skills frontmatter, which Pi requires');
+  assert.match(readFileSync(join(repo, '.pi', 'extensions', 'graft.ts'), 'utf8'), /pi\.on\('session_start'/);
+  assert.equal(
+    JSON.parse(readFileSync(join(repo, '.pi', 'mcp.json'), 'utf8')).mcpServers.graft.command,
+    'npx',
+  );
+
+  const again = runHostsInit(repo, { home, agents: ['pi'] });
+  assert.ok(again.written.every((w) => w.action === 'unchanged'));
+  assert.ok(again.mcp.every((m) => m.action === 'unchanged'));
+  assert.ok(again.hooks.every((h) => h.action === 'unchanged'));
+});
+
+test('pi is detected from ~/.pi, so a plain init wires it', () => {
+  const home = fresh(); const repo = fresh();
+  mkdirSync(join(home, '.pi'));
+  const r = runHostsInit(repo, { home });
+  assert.deepEqual(r.written.map((w) => w.id), ['pi']);
+});
+
+test('a repo .agents dir is Antigravity alone — Pi detects on Pi markers only', () => {
+  const home = fresh(); const repo = fresh();
+  mkdirSync(join(repo, '.agents'));
+  const r = runHostsInit(repo, { home });
+  assert.deepEqual(r.written.map((w) => w.id), ['antigravity']);
+});
+
 test('mcp: false skips MCP registration', () => {
   const home = fresh(); const repo = fresh();
   const r = runHostsInit(repo, { home, agents: ['cursor'], mcp: false });

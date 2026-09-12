@@ -163,16 +163,22 @@ function emit(eventName: string, additionalContext: string): void {
  * shapes:
  *   - Claude Code (`Write`/`Edit`/`MultiEdit`) states it directly as
  *     `tool_input.file_path` (already absolute).
+ *   - Pi (`edit`/`write`/`multi-edit`) names it `tool_input.path` instead, absolute
+ *     or repo-relative (https://pi.dev/docs/latest/extensions).
  *   - Codex (`apply_patch`) carries the whole patch in `tool_input.command` and
  *     names the file in the patch header (`*** Add File:` / `*** Update File:`),
  *     as a repo-relative path — resolved against `dir` here. Take the first
  *     Add/Update target; that one file is enough to mark the graph dirty and
  *     draw a blast radius (the sync re-checks the whole tree anyway).
- * Returns null when neither shape yields a path, so the hook stays a clean no-op.
+ * Returns null when no shape yields a path, so the hook stays a clean no-op.
  */
 export function editedFilePath(input: any, dir: string): string | null {
   const direct = input?.tool_input?.file_path;
   if (typeof direct === 'string' && direct.trim()) return direct;
+  const named = input?.tool_input?.path;
+  if (typeof named === 'string' && named.trim()) {
+    return isAbsolute(named) ? named : join(dir, named);
+  }
   const cmd = input?.tool_input?.command;
   if (typeof cmd === 'string' && cmd) {
     const m = /^\*\*\*\s+(?:Add|Update)\s+File:\s+(.+?)\s*$/m.exec(cmd);
