@@ -6,12 +6,15 @@
 
 - **[Pi](https://pi.dev) is a deeply-wired host**, not just an instruction file:
   `graft init --agents pi` writes the skill card, registers the MCP server in
-  `.pi/mcp.json`, and installs a Pi extension that runs graft's four hooks —
-  repo map at session start, retrieval on each prompt, blast radius on an edit,
-  background re-sync when the agent settles. Pi has no hook config file (its
-  extension API is the hook system), so the extension maps Pi's lifecycle events
-  onto the same hook shim every other host runs. Everything lands inside the
-  repo, and `graft retract` removes all of it.
+  `.pi/mcp.json`, and merges graft's four hooks — Claude-format `hooks` entries
+  plus the shared shim — into `.pi/settings.json`: repo map at session start,
+  retrieval on each prompt, blast radius on an edit, background re-sync at turn
+  end. Pi's extension API is the hook system, so each tier is activated by a pi
+  package rather than by graft: `.pi/mcp.json` goes live with
+  `pi-mcp-extension`, the hooks with a Claude-compatible runner such as
+  `@hsingjui/pi-hooks`, and `init` reports which tiers are live or staged.
+  Everything lands inside the repo, and `graft retract` removes all of it —
+  including `.pi/extensions/graft.ts` files the first iteration generated.
 
 ## 0.17.0
 

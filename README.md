@@ -337,18 +337,17 @@ Where a CLI agent supports user-level `hooks.json`, `init` also installs Graft's
 
 `graft init` is idempotent and never clobbers your existing `.claude/settings.json` — it merges its blocks and leaves the rest alone. A `statusLine` that is not Graft's (anything whose command does not name `graft-statusline.cjs`) is left untouched; re-running `init` will refresh Graft's own helper command if it is already installed. Pass `--no-statusline` (or `GRAFT_NO_STATUSLINE=1`) to skip installing one at all — a project-level `statusLine` would otherwise hide a custom one in `~/.claude/settings.json`. Want the LLM summaries too? Run `graft build --deep` (with a key) whenever you like; auto-sync will never do it for you.
 
-### Pi (deep integration)
+### Pi (capability ladder)
 
-[Pi](https://pi.dev) gets the same four-hook loop as Claude Code, wired entirely inside the repo. Selecting `pi` writes:
+[Pi](https://pi.dev) is wired entirely inside the repo, in tiers decided by which Pi extensions you have installed — never by a graft flag. Selecting `pi` writes:
 
-| Path | What it does |
-|---|---|
-| `.pi/skills/graft/SKILL.md` | the skill card — Pi reads project skills from `.pi/skills/` |
-| `.pi/mcp.json` | registers the Graft MCP server under `mcpServers` |
-| `.pi/extensions/graft.ts` | the hook loop, as a Pi extension |
-| `.pi/hooks/graft-hooks.cjs` | the hook shim the extension calls |
+| Path | What it does | Live when |
+|---|---|---|
+| `.pi/skills/graft/SKILL.md` | the skill card — Pi reads project skills from `.pi/skills/` | always |
+| `.pi/mcp.json` | registers the Graft MCP server under `mcpServers` | `pi-mcp-extension` installed |
+| `.pi/settings.json` + `.pi/hooks/graft-hooks.cjs` | the four-hook loop, as Claude-format `hooks` entries plus the shim they call | a Claude-compatible hook runner installed |
 
-Pi has no hook config file: [its extension API *is* the hook system](https://pi.dev/docs/latest/extensions), so Graft ships a small extension that maps Pi's lifecycle events onto the same hooks every other agent runs — `session_start` → repo map, `before_agent_start` → context for the prompt, `tool_result` on an edit → blast radius appended to the edit's result, `agent_settled` → background re-sync. Nothing is written outside the repo, so `--no-global` keeps it all; `--no-hooks` skips the last two rows. The MCP server becomes visible once Pi's MCP client extension is installed (`pi install npm:pi-mcp-extension`) — the config is written either way.
+No extensions → a skill-card host that still teaches the agent `graft ask`. With `pi-mcp-extension` (`pi install npm:pi-mcp-extension`) the graft tools land as MCP tools; with a hook runner like [`@hsingjui/pi-hooks`](https://github.com/hsingjui/pi-hooks) (`pi install npm:@hsingjui/pi-hooks`) the full loop fires — repo map at session start, context on each prompt, blast radius on an edit, background re-sync at turn end. Both configs are written either way and self-activate when the extension appears; `init` reports which tiers are live. Nothing is written outside the repo, so `--no-global` keeps it all; `--no-hooks` skips the last row.
 
 ---
 

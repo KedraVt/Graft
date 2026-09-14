@@ -220,7 +220,7 @@ test('a full init is fully retractable, and retraction is idempotent', () => {
     join('.claude', 'skills', 'graft', 'SKILL.md'),
     join('.cursor', 'rules', 'graft.mdc'),
     join('.pi', 'skills', 'graft', 'SKILL.md'),
-    join('.pi', 'extensions', 'graft.ts'),
+    join('.pi', 'settings.json'),
     join('.pi', 'hooks', 'graft-hooks.cjs'),
     join('.pi', 'mcp.json'),
     '.mcp.json',
@@ -236,16 +236,37 @@ test('a full init is fully retractable, and retraction is idempotent', () => {
 test('pi hook files are retracted, and exclude spares them', () => {
   const d = fresh();
   runHostsInit(d, { agents: ['pi'], home: fresh(), global: false });
-  const ext = join(d, '.pi', 'extensions', 'graft.ts');
+  const settings = join(d, '.pi', 'settings.json');
   const shim = join(d, '.pi', 'hooks', 'graft-hooks.cjs');
 
   runRetract(d, { apply: true, global: false, exclude: ['pi'] });
-  assert.ok(existsSync(ext) && existsSync(shim), 'excluded host keeps its hook files');
+  assert.ok(existsSync(settings) && existsSync(shim), 'excluded host keeps its hook files');
 
   const r = byPath(runRetract(d, { apply: true, global: false }));
-  assert.equal(r.get(ext), 'deleted');
+  assert.equal(r.get(settings), 'deleted', 'settings.json held only graft hooks');
   assert.equal(r.get(shim), 'deleted');
   assert.ok(!existsSync(join(d, '.pi')), 'the emptied .pi/ tree is pruned too');
+});
+
+test('pi settings.json keeps foreign keys while graft hook entries are stripped', () => {
+  const d = fresh();
+  write(d, join('.pi', 'settings.json'), JSON.stringify({ packages: ['npm:@hsingjui/pi-hooks'] }));
+  runHostsInit(d, { agents: ['pi'], home: fresh(), global: false });
+
+  const r = byPath(runRetract(d, { apply: true, global: false }));
+  const settings = join(d, '.pi', 'settings.json');
+  assert.equal(r.get(settings), 'removed', 'entries stripped, file survives');
+  const root = JSON.parse(readFileSync(settings, 'utf8'));
+  assert.deepEqual(root, { packages: ['npm:@hsingjui/pi-hooks'] }, 'only graft hooks went');
+});
+
+test('the superseded .pi/extensions/graft.ts is retracted as a legacy file', () => {
+  const d = fresh();
+  const legacy = write(d, join('.pi', 'extensions', 'graft.ts'), '// old generated extension\n');
+  // Even with pi excluded — the file belongs to no live host, and a kept pi
+  // install now drives its hooks from settings.json instead.
+  const r = byPath(runRetract(d, { apply: true, global: false, exclude: ['pi'] }));
+  assert.equal(r.get(legacy), 'deleted');
 });
 
 test('exclude spares the hosts init is about to rewrite', () => {

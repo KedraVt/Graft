@@ -16,6 +16,7 @@ import { formatGraphCheckReport } from "./graph/check.js";
 import { buildGraphIfMissing, runInit } from "./claude/init.js";
 import { statuslineWanted } from "./claude/settings-merge.js";
 import { runHostsInit } from "./hosts/init.js";
+import { piCapabilities } from "./hosts/pi-capabilities.js";
 import { hostIds } from "./hosts/registry.js";
 import { contextDirFor } from "./context/node-file.js";
 import { loadGraphCached } from "./graph/load.js";
@@ -1098,6 +1099,19 @@ function wireTarget(
       for (const w of r.written) console.error(`✓ ${w.id}: ${w.path} (${w.action})`);
       for (const m of r.mcp) console.error(`✓ mcp ${m.id}: ${m.path} (${m.action})`);
       for (const h of r.hooks) console.error(`✓ hook ${h.id}: ${h.path} (${h.action})`);
+      // Pi's tiers are decided by which extensions are installed, not by what
+      // init wrote — say which are live now and which are staged config.
+      if (others.includes("pi") && (opts.mcp !== false || opts.hooks !== false)) {
+        const caps = piCapabilities(repo, home);
+        if (opts.mcp !== false)
+          console.error(caps.mcp
+            ? `· pi: mcp live (${caps.mcp})`
+            : "· pi: mcp staged — `pi install npm:pi-mcp-extension` activates .pi/mcp.json");
+        if (opts.hooks !== false)
+          console.error(caps.hooks
+            ? `· pi: hooks live (${caps.hooks})`
+            : "· pi: hooks staged — `pi install npm:@hsingjui/pi-hooks` (a Claude-format hook runner) activates the settings.json entries");
+      }
       // Only worth saying when there was actually something out-of-repo to skip.
       if (opts.global === false && selectedWrites(plan, ids).some((w) => w.scope === "global"))
         console.error("· skipped out-of-repo writes (--no-global)");

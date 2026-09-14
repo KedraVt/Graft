@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, writeFileSync, mkdirSync, existsSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { installPiHooks, piHookTargets, piExtension } from '../src/hosts/pi-hooks.js';
+import { installPiHooks, piHookTargets } from '../src/hosts/pi-hooks.js';
+import { piCapabilities } from '../src/hosts/pi-capabilities.js';
 import { runHostsInit } from '../src/hosts/init.js';
 import { editedFilePath } from '../src/claude/hooks.js';
 
@@ -16,60 +17,78 @@ function assertRunnableShim(shim: string, note: string): void {
 }
 
 const shimPath = (repo: string) => join(repo, '.pi', 'hooks', 'graft-hooks.cjs');
-const extPath = (repo: string) => join(repo, '.pi', 'extensions', 'graft.ts');
+const settingsPath = (repo: string) => join(repo, '.pi', 'settings.json');
+const readHooks = (repo: string) => JSON.parse(readFileSync(settingsPath(repo), 'utf8')).hooks;
 
 test('piHookTargets are repo-local and always present (no CLI-home gate)', () => {
   const repo = fresh();
   const t = piHookTargets(repo);
   assert.equal(t.length, 2);
   assert.ok(t.every((w) => w.scope === 'repo' && w.hostId === 'pi' && w.kind === 'hook'));
-  assert.deepEqual(t.map((w) => w.path).sort(), [extPath(repo), shimPath(repo)].sort());
+  assert.deepEqual(t.map((w) => w.path).sort(), [settingsPath(repo), shimPath(repo)].sort());
 });
 
-test('writes shim + extension, idempotent on re-run', () => {
+test('writes shim + Claude-format hooks block in .pi/settings.json, idempotent on re-run', () => {
   const repo = fresh();
   const w = installPiHooks(repo);
   assert.deepEqual(w.map((x) => x.action), ['created', 'created']);
   assertRunnableShim(shimPath(repo), 'shim is executable');
 
-  const ext = readFileSync(extPath(repo), 'utf8');
-  // Pi's hook system is the extension API, so the four graft hooks are `pi.on`
-  // subscriptions rather than entries in a config file.
-  const sub = (event: string) =>
-    ext.match(new RegExp(`pi\\.on\\('${event}'[\\s\\S]*?runHook\\(\\s*'([a-z-]+)'`))?.[1];
-  assert.equal(sub('session_start'), 'session-start', 'orientation hook');
-  assert.equal(sub('before_agent_start'), 'prompt', 'the coupling-seed retrieval hook');
-  assert.equal(sub('tool_result'), 'post-edit', 'edit hook');
-  // agent_settled, not agent_end: Pi can auto-retry or run a queued message after
-  // a run ends, and the sync belongs at the point it stops on its own.
-  assert.equal(sub('agent_settled'), 'stop', 'background-sync hook');
-  // the edit filter must include Pi's native edit tool
-  assert.match(ext, /EDIT_TOOLS = new Set\(\['edit'/);
-  // the shim is resolved next to the extension, never as a machine-specific path
-  assert.match(ext, /\.\.\/hooks\/graft-hooks\.cjs/);
-  assert.ok(!ext.includes(repo), 'no absolute install path baked into a committed file');
+  const hooks = readHooks(repo);
+  // The four graft hooks as Claude-format entries a hook-runner extension
+  // reads: command + timeout in *seconds* (the runner's convention).
+  const cmd = (event: string) => hooks[event]?.flatMap((g: any) => g.hooks ?? []).map((h: any) => h.command);
+  assert.deepEqual(cmd('SessionStart'), ['node ".pi/hooks/graft-hooks.cjs" session-start'], 'orientation hook');
+  assert.deepEqual(cmd('UserPromptSubmit'), ['node ".pi/hooks/graft-hooks.cjs" prompt'], 'the coupling-seed retrieval hook');
+  assert.deepEqual(cmd('PostToolUse'), ['node ".pi/hooks/graft-hooks.cjs" post-edit'], 'edit hook');
+  assert.deepEqual(cmd('Stop'), ['node ".pi/hooks/graft-hooks.cjs" stop'], 'background-sync hook');
+  // the matcher names Pi's native mutating tools
+  assert.equal(hooks.PostToolUse[0].matcher, 'edit|write');
+  // seconds, not the milliseconds graft passes to its own children
+  assert.equal(hooks.UserPromptSubmit[0].hooks[0].timeout, 15);
+  // a relative shim path: a committed settings.json carries no absolute path
+  const settings = readFileSync(settingsPath(repo), 'utf8');
+  assert.ok(!settings.includes(repo), 'no absolute install path baked into a committed file');
 
   const again = installPiHooks(repo);
   assert.deepEqual(again.map((x) => x.action), ['unchanged', 'unchanged'], 'idempotent');
-  assert.equal(readFileSync(extPath(repo), 'utf8'), ext, 'extension byte-identical on re-run');
 });
 
-test('a hand-edited graft extension is restored — the file is graft-owned', () => {
+test("foreign settings keys and foreign hook entries are preserved", () => {
   const repo = fresh();
+  mkdirSync(join(repo, '.pi'), { recursive: true });
+  writeFileSync(settingsPath(repo), JSON.stringify({
+    packages: ['npm:@hsingjui/pi-hooks'],
+    shellPath: 'C:/Program Files/Git/bin/bash.exe',
+    hooks: {
+      SessionStart: [{ hooks: [{ type: 'command', command: 'their-hook.sh' }] }],
+      Stop: [{ hooks: [{ type: 'command', command: 'their-stop.sh' }] }],
+    },
+  }, null, 2));
+
   installPiHooks(repo);
-  writeFileSync(extPath(repo), '// gutted\n');
+  const root = JSON.parse(readFileSync(settingsPath(repo), 'utf8'));
+  assert.deepEqual(root.packages, ['npm:@hsingjui/pi-hooks'], 'packages untouched');
+  assert.equal(root.shellPath, 'C:/Program Files/Git/bin/bash.exe', 'foreign keys untouched');
+  const starts = root.hooks.SessionStart.map((g: any) => g.hooks[0].command);
+  assert.deepEqual(starts, ['their-hook.sh', 'node ".pi/hooks/graft-hooks.cjs" session-start'], 'foreign entry kept, graft appended');
+  const stops = root.hooks.Stop.map((g: any) => g.hooks[0].command);
+  assert.deepEqual(stops, ['their-stop.sh', 'node ".pi/hooks/graft-hooks.cjs" stop']);
+
+  // Re-running replaces graft's entry rather than stacking a second copy.
+  installPiHooks(repo);
+  const again = readHooks(repo);
+  assert.equal(again.SessionStart.length, 2, 'still one graft entry');
+});
+
+test('an unparseable settings.json is left alone (shim still written)', () => {
+  const repo = fresh();
+  mkdirSync(join(repo, '.pi'), { recursive: true });
+  writeFileSync(settingsPath(repo), '{ not json');
   const w = installPiHooks(repo);
-  assert.ok(w.some((x) => x.id === 'pi-hooks' && x.action === 'updated'));
-  assert.equal(readFileSync(extPath(repo), 'utf8'), piExtension());
-});
-
-test("a foreign extension next to graft's is left alone", () => {
-  const repo = fresh();
-  mkdirSync(join(repo, '.pi', 'extensions'), { recursive: true });
-  const mine = join(repo, '.pi', 'extensions', 'mine.ts');
-  writeFileSync(mine, 'export default () => {};\n');
-  installPiHooks(repo);
-  assert.equal(readFileSync(mine, 'utf8'), 'export default () => {};\n');
+  assert.ok(w.some((x) => x.id === 'pi-hooks' && x.action === 'skipped-unparseable'));
+  assert.equal(readFileSync(settingsPath(repo), 'utf8'), '{ not json');
+  assertRunnableShim(shimPath(repo), 'shim still installed');
 });
 
 test('editedFilePath reads the touched file from Pi\'s edit shape', () => {
@@ -85,12 +104,37 @@ test('editedFilePath reads the touched file from Pi\'s edit shape', () => {
   assert.equal(editedFilePath({ tool_input: { path: '  ' } }, dir), null);
 });
 
+// ── capability probe ────────────────────────────────────────────────────────
+
+test('piCapabilities reports nothing installed on a bare machine', () => {
+  const repo = fresh(); const home = fresh();
+  assert.deepEqual(piCapabilities(repo, home), { mcp: null, hooks: null });
+});
+
+test('piCapabilities finds packages in project and user settings', () => {
+  const repo = fresh(); const home = fresh();
+  mkdirSync(join(home, '.pi', 'agent'), { recursive: true });
+  writeFileSync(join(home, '.pi', 'agent', 'settings.json'), JSON.stringify({ packages: ['npm:pi-mcp-extension'] }));
+  mkdirSync(join(repo, '.pi'), { recursive: true });
+  writeFileSync(settingsPath(repo), JSON.stringify({ packages: ['npm:@hsingjui/pi-hooks'] }));
+  assert.deepEqual(piCapabilities(repo, home), { mcp: 'pi-mcp-extension', hooks: '@hsingjui/pi-hooks' });
+});
+
+test('piCapabilities finds installed packages under .pi/npm/node_modules', () => {
+  const repo = fresh(); const home = fresh();
+  mkdirSync(join(repo, '.pi', 'npm', 'node_modules', '@hsingjui', 'pi-hooks'), { recursive: true });
+  assert.equal(piCapabilities(repo, home).hooks, '@hsingjui/pi-hooks');
+  // the unrelated `pi-hooks` collection is NOT a Claude-format hook runner
+  mkdirSync(join(repo, '.pi', 'npm', 'node_modules', 'pi-hooks'), { recursive: true });
+  assert.equal(piCapabilities(repo, home).hooks, '@hsingjui/pi-hooks', 'bare pi-hooks is not a runner');
+});
+
 // ── runHostsInit wiring ─────────────────────────────────────────────────────
 
 test('runHostsInit --agents pi writes the repo-local hook files and never touches ~/.pi', () => {
   const home = fresh(); const repo = fresh();
   const r = runHostsInit(repo, { home, agents: ['pi'] });
-  assert.ok(existsSync(extPath(repo)), 'extension written in the repo');
+  assert.ok(existsSync(settingsPath(repo)), 'hook entries written in the repo settings');
   assertRunnableShim(shimPath(repo), 'shim written in the repo');
   assert.ok(r.hooks.some((h) => h.id === 'pi-hooks'), 'reported in result.hooks');
   assert.ok(!existsSync(join(home, '.pi')), 'no ~/.pi writes');
@@ -99,13 +143,13 @@ test('runHostsInit --agents pi writes the repo-local hook files and never touche
 test('pi hooks are repo-local, so --no-global does NOT suppress them', () => {
   const home = fresh(); const repo = fresh();
   runHostsInit(repo, { home, agents: ['pi'], global: false });
-  assert.ok(existsSync(extPath(repo)), '--no-global keeps the repo-local Pi extension');
+  assert.ok(existsSync(settingsPath(repo)), '--no-global keeps the repo-local hook entries');
 });
 
 test('--no-hooks skips the Pi hook files (skill still written)', () => {
   const home = fresh(); const repo = fresh();
   const r = runHostsInit(repo, { home, agents: ['pi'], hooks: false });
-  assert.ok(!existsSync(extPath(repo)), 'no extension under --no-hooks');
+  assert.ok(!existsSync(settingsPath(repo)), 'no settings.json under --no-hooks');
   assert.ok(!existsSync(shimPath(repo)), 'no shim under --no-hooks');
   assert.ok(!r.hooks.some((h) => h.id?.startsWith('pi')), 'no pi hook writes reported');
   assert.ok(existsSync(join(repo, '.pi', 'skills', 'graft', 'SKILL.md')), 'the skill is still written');

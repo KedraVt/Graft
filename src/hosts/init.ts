@@ -90,8 +90,10 @@ export function runHostsInit(
     opts.hooks === false || !selected.some((h) => h.id === 'cursor')
       ? []
       : installCursorHooks(repo);
-  // Pi's extension + shim are repo-local (.pi/), same posture as Cursor's hooks:
-  // --no-global leaves them in place, only --no-hooks skips them.
+  // Pi's hook entries + shim are repo-local (.pi/), same posture as Cursor's
+  // hooks: --no-global leaves them in place, only --no-hooks skips them. The
+  // entries sit in .pi/settings.json, inert until a Claude-compatible hook
+  // runner extension is installed — staged, like .pi/mcp.json.
   const piHooks =
     opts.hooks === false || !selected.some((h) => h.id === 'pi')
       ? []

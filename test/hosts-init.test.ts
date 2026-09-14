@@ -121,7 +121,8 @@ test('--agents pi wires the whole Pi layer, and a re-run is unchanged', () => {
   assert.deepEqual(r.written.map((w) => w.id), ['pi']);
   const skill = readFileSync(join(repo, '.pi', 'skills', 'graft', 'SKILL.md'), 'utf8');
   assert.match(skill, /^---\nname: graft\n/, 'Agent Skills frontmatter, which Pi requires');
-  assert.match(readFileSync(join(repo, '.pi', 'extensions', 'graft.ts'), 'utf8'), /pi\.on\('session_start'/);
+  const settings = JSON.parse(readFileSync(join(repo, '.pi', 'settings.json'), 'utf8'));
+  assert.match(settings.hooks.SessionStart[0].hooks[0].command, /graft-hooks\.cjs" session-start/);
   assert.equal(
     JSON.parse(readFileSync(join(repo, '.pi', 'mcp.json'), 'utf8')).mcpServers.graft.command,
     'npx',

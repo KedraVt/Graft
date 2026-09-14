@@ -1,53 +1,60 @@
 /**
- * Pi's active layer (https://pi.dev/docs/latest/extensions).
+ * Pi's active layer, via a Claude-compatible hook runner.
  *
- * Pi has no command-hook config file: its hook system IS the extension API — a
- * TypeScript module in `.pi/extensions/` that subscribes to lifecycle events and
- * is loaded through jiti, so no build step and no dependency on the pi package
- * (the local interfaces below are type-only). Graft therefore ships an extension
- * that adapts Pi's events onto the same four hook sub-commands every other host
- * runs, keeping `src/claude/hooks.ts` the single implementation:
+ * Pi has no command-hook config of its own: its extension API is the hook
+ * system, and command hooks come from a *runner extension* that reads a
+ * `hooks` key in `.pi/settings.json` (Claude Code format — matcher groups of
+ * `type: "command"` entries) and spawns each command with the event payload
+ * on stdin. `@hsingjui/pi-hooks` is that runner today; any extension honoring
+ * the same contract works.
  *
- *   - `session_start`        → `session-start` : orientation from `graft/INDEX.md`
- *   - `before_agent_start`   → `prompt`        : the coupling-seed retrieval pack
- *   - `tool_result` (an edit)→ `post-edit`     : blast radius + mark the graph dirty
- *   - `agent_settled`        → `stop`          : one background graph sync per turn
+ * So graft writes two repo-local things, exactly like `.pi/mcp.json` waits
+ * for `pi-mcp-extension`:
  *
- * Both files are repo-local (`.pi/extensions/graft.ts` + `.pi/hooks/graft-hooks.cjs`),
- * like the Cursor hooks and unlike Codex's `~/.codex` set: they fire in this repo
- * only, so `--no-global` does not suppress them; `--no-hooks` does.
+ *   - `.pi/hooks/graft-hooks.cjs` — the same shim Claude Code and Codex run,
+ *     so `src/claude/hooks.ts` stays the single implementation
+ *   - a `hooks` block in `.pi/settings.json`, mapping the four graft hooks:
+ *       SessionStart      → `session-start` : orientation from `graft/INDEX.md`
+ *       UserPromptSubmit  → `prompt`        : the coupling-seed retrieval pack
+ *       PostToolUse(edit) → `post-edit`     : blast radius + mark the graph dirty
+ *       Stop              → `stop`          : one background graph sync per turn
  *
- * Two event mappings are worth naming. The orientation text cannot be injected at
- * `session_start` (no message channel there), so it is held and prepended to the
- * first `before_agent_start` injection — the same turn the model would have seen it.
- * And `post-edit`'s blast radius is appended to the edit's own tool result, which
- * `tool_result` handlers are allowed to rewrite, rather than injected as a message.
+ * The block is *staged*: written whether or not a runner is installed, inert
+ * until one is (nothing reads `hooks` without it). That is the capability
+ * ladder — skill only, +MCP, +hooks — decided by which pi packages the user
+ * has, never by a graft flag.
+ *
+ * Both writes are repo-local, like Cursor's hooks and unlike Codex's
+ * `~/.codex` set: `--no-global` does not suppress them; `--no-hooks` does.
+ *
+ * Two runner-side details are worth naming. `PostToolUse`'s matcher is pi's
+ * own mutating tools (`edit`, `write`), whose input carries the file as
+ * `path` — `editedFilePath` in hooks.ts already reads that shape. And the
+ * runner's `Stop` fires on `agent_end`, more often than `agent_settled`:
+ * harmless, since the sync is dirty-gated and lock-held, but the reason a
+ * graft-owned runner would prefer `agent_settled`.
  */
-import { join } from 'node:path';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { hooksShim } from '../claude/shim-template.js';
 import { claudeDistDir } from '../claude/paths.js';
 import type { PlannedWrite } from './plan.js';
-import { writeOwned, type ConfigWrite } from './config-write.js';
+import { writeOwned, isGraftEntry, readJsonObject, type ConfigWrite } from './config-write.js';
 
-/** Pi's built-in file-mutating tools (`read`/`bash`/`grep`/`find`/`ls` are the
- *  rest of the set), whose input carries the touched file as `path`, relative or
- *  absolute — `edit` takes `{ path, edits[] }`, `write` takes `{ path, content }`. */
-const EDIT_TOOLS = ['edit', 'write'];
-
-/** Per-hook child budgets, matching the Codex entries. */
-const TIMEOUTS = { sessionStart: 10000, prompt: 15000, postEdit: 10000, stop: 10000 };
+/** Pi's built-in file-mutating tools; their input carries the file as `path`. */
+const EDIT_MATCHER = 'edit|write';
 
 function shimPathFor(repo: string): string {
   return join(repo, '.pi', 'hooks', 'graft-hooks.cjs');
 }
-function extensionPathFor(repo: string): string {
-  return join(repo, '.pi', 'extensions', 'graft.ts');
+function settingsPathFor(repo: string): string {
+  return join(repo, '.pi', 'settings.json');
 }
 
 /**
- * The files a Pi hook install would touch — pure, no writes. Both are repo-local
- * and unconditional: unlike Codex there is no "is the CLI installed" gate, since
- * what we write is the repo's own `.pi/`.
+ * The files a Pi hook install would touch — pure, no writes. Both are
+ * repo-local and unconditional: what we write is the repo's own `.pi/`, and
+ * the settings entry is inert without a runner to execute it.
  */
 export function piHookTargets(repo: string): PlannedWrite[] {
   return [
@@ -58,127 +65,66 @@ export function piHookTargets(repo: string): PlannedWrite[] {
     },
     {
       hostId: 'pi', id: 'pi-hooks',
-      path: extensionPathFor(repo),
-      scope: 'repo', kind: 'hook', what: 'session_start / before_agent_start / tool_result / agent_settled',
+      path: settingsPathFor(repo),
+      scope: 'repo', kind: 'hook', what: 'SessionStart / UserPromptSubmit / PostToolUse / Stop hook entries',
     },
   ];
 }
 
 /**
- * The extension source graft owns. It finds the shim relative to its own module
- * URL rather than through an install-time absolute path, so the file stays
- * correct for everyone who checks the repo out.
+ * The graft hook entries Pi's settings.json should carry — the Claude Code
+ * shape every runner reads, mirroring the Codex set. `matcher` is omitted
+ * where the event has nothing to match against (SessionStart fires for every
+ * source, Stop for every end). `timeout` is in *seconds* — the runner's
+ * convention, not the milliseconds graft passes to its own children.
+ *
+ * The command names the shim *relative to the project*: the runner spawns it
+ * with the project dir as cwd, and a relative path keeps a committed
+ * settings.json free of machine-specific absolute paths (the same rule the
+ * MCP launch entries follow).
  */
-export function piExtension(): string {
-  const editTools = EDIT_TOOLS.map((t) => `'${t}'`).join(', ');
-  return `// graft — generated by \`graft init\`. Owned by graft: edits are overwritten.
-//
-// Adapts Pi's lifecycle events onto graft's hook shim, which runs the same
-// handlers Claude Code, Codex and Cursor use. Removed by \`graft retract\`.
-import { spawnSync } from 'node:child_process';
-import { basename, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
-
-type PiEvent = Record<string, unknown>;
-interface PiContext {
-  sessionManager?: { getSessionFile?: () => string | undefined };
-}
-interface PiExtensionApi {
-  on(event: string, handler: (event: PiEvent, ctx: PiContext) => unknown): void;
-}
-
-const EDIT_TOOLS = new Set([${editTools}]);
-
-/** The shim next to this extension, or the conventional path if this module's
- *  own URL is unavailable. */
-function shimPath(): string {
-  try {
-    return fileURLToPath(new URL('../hooks/graft-hooks.cjs', import.meta.url));
-  } catch {
-    return join(process.cwd(), '.pi', 'hooks', 'graft-hooks.cjs');
-  }
-}
-
-/** Run one hook sub-command, returning the context it asks to inject (if any).
- *  Every failure path is a silent no-op: a hook must never break a session. */
-function runHook(sub: string, payload: Record<string, unknown>, timeout: number): string | null {
-  const cwd = process.cwd();
-  try {
-    const res = spawnSync(process.execPath, [shimPath(), sub], {
-      input: JSON.stringify({ cwd, ...payload }),
-      encoding: 'utf8',
-      cwd,
-      timeout,
-      env: { ...process.env, CLAUDE_PROJECT_DIR: cwd },
-    });
-    const parsed = JSON.parse(res.stdout || '{}') as {
-      hookSpecificOutput?: { additionalContext?: unknown };
-    };
-    const text = parsed.hookSpecificOutput?.additionalContext;
-    return typeof text === 'string' && text.trim() ? text : null;
-  } catch {
-    return null;
-  }
-}
-
-function sessionId(ctx: PiContext): string {
-  const file = ctx.sessionManager?.getSessionFile?.();
-  return file ? basename(file) : 'default';
-}
-
-export default function graft(pi: PiExtensionApi): void {
-  // Orientation is produced at session start, where there is no message channel
-  // yet; it rides along with the first prompt injection instead.
-  let pending: string[] = [];
-
-  pi.on('session_start', (_event, ctx) => {
-    const text = runHook('session-start', { session_id: sessionId(ctx) }, ${TIMEOUTS.sessionStart});
-    if (text) pending.push(text);
-  });
-
-  pi.on('before_agent_start', (event, ctx) => {
-    const prompt = typeof event.prompt === 'string' ? event.prompt : '';
-    const retrieval = runHook(
-      'prompt',
-      { prompt, session_id: sessionId(ctx), agent: { name: 'pi' } },
-      ${TIMEOUTS.prompt},
-    );
-    const parts = [...pending, ...(retrieval ? [retrieval] : [])];
-    pending = [];
-    if (parts.length === 0) return;
-    return { message: { customType: 'graft', content: parts.join('\\n\\n'), display: false } };
-  });
-
-  pi.on('tool_result', (event, ctx) => {
-    const toolName = typeof event.toolName === 'string' ? event.toolName : '';
-    if (!EDIT_TOOLS.has(toolName)) return;
-    const text = runHook(
-      'post-edit',
-      { tool_name: toolName, tool_input: event.input, session_id: sessionId(ctx) },
-      ${TIMEOUTS.postEdit},
-    );
-    if (!text) return;
-    const content = Array.isArray(event.content) ? event.content : [];
-    return { content: [...content, { type: 'text', text }] };
-  });
-
-  // agent_settled rather than agent_end: Pi may auto-retry or continue with a
-  // queued message after a run ends, and the sync wants the quiet point.
-  pi.on('agent_settled', (_event, ctx) => {
-    runHook('stop', { session_id: sessionId(ctx) }, ${TIMEOUTS.stop});
-  });
-}
-`;
+interface DesiredEntry { event: string; matcher?: string; sub: string; timeout: number; }
+function desiredEntries(): DesiredEntry[] {
+  return [
+    { event: 'SessionStart', sub: 'session-start', timeout: 10 },
+    { event: 'UserPromptSubmit', sub: 'prompt', timeout: 15 },
+    { event: 'PostToolUse', matcher: EDIT_MATCHER, sub: 'post-edit', timeout: 10 },
+    { event: 'Stop', sub: 'stop', timeout: 10 },
+  ];
 }
 
 /**
- * Install (or refresh) graft's Pi extension in `repo`. Both files are wholly
- * graft's, so this is two owned writes rather than a merge — idempotent, and
- * `unchanged` on a re-run whose content already matches.
+ * Install graft's Pi hook layer in `repo`: own the shim wholesale, merge the
+ * hook entries into the user's settings.json. Same merge posture as the Codex
+ * hooks installer — foreign hook entries and foreign settings keys
+ * (`packages`, `shellPath`, …) are preserved, prior graft entries are
+ * replaced rather than stacked, and an unparseable file is never rewritten.
  */
 export function installPiHooks(repo: string): ConfigWrite[] {
-  return [
-    writeOwned('pi-hook-shim', shimPathFor(repo), hooksShim(claudeDistDir()), 0o755),
-    writeOwned('pi-hooks', extensionPathFor(repo), piExtension()),
-  ];
+  const shimPath = shimPathFor(repo);
+  const shimWrite = writeOwned('pi-hook-shim', shimPath, hooksShim(claudeDistDir()), 0o755);
+  const cfgPath = settingsPathFor(repo);
+  const skipped: ConfigWrite = { id: 'pi-hooks', path: cfgPath, action: 'skipped-unparseable' };
+
+  const loaded = readJsonObject(cfgPath);
+  if (loaded === 'unparseable') return [shimWrite, skipped];
+  const { root, existed } = loaded;
+  const before = JSON.stringify(root);
+  const hooks = (root.hooks ??= {});
+  if (typeof hooks !== 'object' || hooks === null || Array.isArray(hooks)) return [shimWrite, skipped];
+
+  for (const d of desiredEntries()) {
+    if (hooks[d.event] !== undefined && !Array.isArray(hooks[d.event])) return [shimWrite, skipped];
+    const prior: unknown[] = Array.isArray(hooks[d.event]) ? hooks[d.event] : [];
+    const handler = { type: 'command', command: `node ".pi/hooks/graft-hooks.cjs" ${d.sub}`, timeout: d.timeout };
+    const entry = d.matcher ? { matcher: d.matcher, hooks: [handler] } : { hooks: [handler] };
+    // Preserve foreign entries in this event; replace any prior graft entry so
+    // an upgrade re-points to the current command instead of stacking.
+    hooks[d.event] = [...prior.filter((e) => !isGraftEntry(e)), entry];
+  }
+
+  if (JSON.stringify(root) === before) return [shimWrite, { id: 'pi-hooks', path: cfgPath, action: 'unchanged' }];
+  mkdirSync(dirname(cfgPath), { recursive: true });
+  writeFileSync(cfgPath, `${JSON.stringify(root, null, 2)}\n`);
+  return [shimWrite, { id: 'pi-hooks', path: cfgPath, action: existed ? 'updated' : 'created' }];
 }

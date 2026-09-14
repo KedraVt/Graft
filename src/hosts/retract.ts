@@ -84,7 +84,17 @@ export interface RetractOpts {
  * This is where a *removed* host's file goes. Deleting an entry from `HOSTS`
  * without adding it here is what strands a file in every existing repo.
  */
-const LEGACY_TARGETS: { relPath: string; kind: 'owned' | 'section'; what: string }[] = [];
+const LEGACY_TARGETS: { relPath: string; kind: 'owned' | 'section'; what: string }[] = [
+  // The first Pi integration generated an extension module under
+  // `.pi/extensions/`; the hook entries now live in `.pi/settings.json`
+  // instead. Without this entry a repo wired by that version would keep the
+  // generated file forever.
+  {
+    relPath: join('.pi', 'extensions', 'graft.ts'),
+    kind: 'owned',
+    what: 'graft-owned Pi extension (superseded by settings.json hook entries)',
+  },
+];
 
 // ---------------------------------------------------------------------------
 // primitive operations
@@ -260,8 +270,14 @@ function stripClaudeSettings(path: string, apply: boolean): RetractAction {
   return 'removed';
 }
 
-/** Remove graft's PostToolUse/SessionStart/etc. entries from Codex's hooks.json. */
-function stripCodexHooks(path: string, apply: boolean): RetractAction {
+/**
+ * Remove graft's hook entries from a `hooks`-keyed JSON file — Codex's
+ * `hooks.json` and Pi's `settings.json` share the Claude Code shape, so one
+ * stripper serves both. Only entries naming `graft-hooks.cjs` go; foreign
+ * entries, foreign events, and every other top-level key (Pi's `packages`,
+ * `shellPath`, …) are preserved.
+ */
+function stripHooksJson(path: string, apply: boolean): RetractAction {
   if (!existsSync(path)) return 'absent';
   let root: Record<string, any>;
   try {
@@ -414,12 +430,17 @@ function targets(repo: string, opts: RetractOpts): Target[] {
     });
   }
 
-  // 2b. Pi's hook layer. Repo-local and wholly graft's (an extension module plus
-  //     the shim it calls), so both come off as whole files. Listed explicitly:
-  //     unlike the MCP configs there is no registry to derive them from.
+  // 2b. Pi's hook layer. The shim is wholly graft's and comes off whole;
+  //     settings.json is the user's file, so only graft's hook entries are
+  //     stripped from it (the file survives while any other key remains).
+  //     Listed explicitly: unlike the MCP configs there is no registry to
+  //     derive them from.
   if (!exclude.has('pi')) {
     for (const t of piHookTargets(repo)) {
-      add({ hostId: t.hostId, path: t.path, what: t.what, scope: 'repo', run: (a) => removeFile(t.path, a) });
+      add({
+        hostId: t.hostId, path: t.path, what: t.what, scope: 'repo',
+        run: (a) => (t.id === 'pi-hook-shim' ? removeFile(t.path, a) : stripHooksJson(t.path, a)),
+      });
     }
   }
 
@@ -450,7 +471,7 @@ function targets(repo: string, opts: RetractOpts): Target[] {
       for (const t of hookTargets(home)) {
         add({
           hostId: t.hostId, path: t.path, what: t.what, scope: 'global',
-          run: (a) => (t.path.endsWith('.json') ? stripCodexHooks(t.path, a) : removeFile(t.path, a)),
+          run: (a) => (t.path.endsWith('.json') ? stripHooksJson(t.path, a) : removeFile(t.path, a)),
         });
       }
     }

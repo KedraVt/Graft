@@ -91,7 +91,7 @@ test('pi plans a skill, a repo-local MCP file and the two hook files — nothing
   assert.deepEqual(pi.writes.filter((w) => w.scope === 'global'), [], 'Pi is wired repo-locally');
   assert.deepEqual(
     pi.writes.map((w) => toPosixPath(w.path.slice(repo.length))).sort(),
-    ['/.pi/extensions/graft.ts', '/.pi/hooks/graft-hooks.cjs', '/.pi/mcp.json', '/.pi/skills/graft/SKILL.md'],
+    ['/.pi/hooks/graft-hooks.cjs', '/.pi/mcp.json', '/.pi/settings.json', '/.pi/skills/graft/SKILL.md'],
   );
 });
 
